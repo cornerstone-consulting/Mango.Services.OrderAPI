@@ -1,0 +1,77 @@
+name: OrderAPI CI/CD
+
+on:
+  pull_request:
+    branches:
+      - main
+
+  push:
+    branches:
+      - main
+      - feature/megha-orderapi
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Create NuGet config
+        shell: bash
+        env:
+          NUGET_PAT: ${{ secrets.NUGET_PAT }}
+        run: |
+          cat > nuget.ci.config <<EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <packageSources>
+              <clear />
+              <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+              <add key="github" value="https://nuget.pkg.github.com/MdKasimS-CCG/index.json" />
+            </packageSources>
+
+            <packageSourceCredentials>
+              <github>
+                <add key="Username" value="MeghaScaria" />
+                <add key="ClearTextPassword" value="${NUGET_PAT}" />
+              </github>
+            </packageSourceCredentials>
+          </configuration>
+          EOF
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build OrderAPI image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ghcr.io/mdkasims-ccg/mango.services.orderapi:${{ github.sha }}
+            ${{ github.ref == 'refs/heads/main' && 'ghcr.io/mdkasims-ccg/mango.services.orderapi:latest' || '' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          secret-files: |
+            nugetconfig=./nuget.ci.config
+
+      - name: Remove temporary NuGet config
+        if: always()
+        shell: bash
+        run: rm -f nuget.ci.config

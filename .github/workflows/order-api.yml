@@ -8,7 +8,7 @@ on:
   push:
     branches:
       - main
-      - feature/megha-orderapi
+      - feature/*
 
 permissions:
   contents: read
@@ -26,7 +26,7 @@ jobs:
       - name: Create NuGet config
         shell: bash
         env:
-          NUGET_PAT: ${{ secrets.NUGET_PAT }}
+          NUGET_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cat > nuget.ci.config <<EOF
           <?xml version="1.0" encoding="utf-8"?>
@@ -34,13 +34,13 @@ jobs:
             <packageSources>
               <clear />
               <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
-              <add key="github" value="https://nuget.pkg.github.com/MdKasimS-CCG/index.json" />
+              <add key="github" value="https://nuget.pkg.github.com/cornerstone-consulting/index.json" />
             </packageSources>
 
             <packageSourceCredentials>
               <github>
-                <add key="Username" value="MeghaScaria" />
-                <add key="ClearTextPassword" value="${NUGET_PAT}" />
+                <add key="Username" value="${{ github.actor }}" />
+                <add key="ClearTextPassword" value="${NUGET_TOKEN}" />
               </github>
             </packageSourceCredentials>
           </configuration>
@@ -64,8 +64,8 @@ jobs:
           file: ./Dockerfile
           push: ${{ github.event_name == 'push' }}
           tags: |
-            ghcr.io/mdkasims-ccg/mango.services.orderapi:${{ github.sha }}
-            ${{ github.ref == 'refs/heads/main' && 'ghcr.io/mdkasims-ccg/mango.services.orderapi:latest' || '' }}
+            ghcr.io/cornerstone-consulting/mango.services.orderapi:${{ github.sha }}
+            ${{ github.ref == 'refs/heads/main' && 'ghcr.io/cornerstone-consulting/mango.services.orderapi:latest' || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           secret-files: |

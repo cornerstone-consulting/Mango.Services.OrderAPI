@@ -11,15 +11,18 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
 
-COPY ["Mango.Services.OrderAPI.csproj", "./"]
+COPY ["Mango.Services.OrderAPI/Mango.Services.OrderAPI.csproj", "Mango.Services.OrderAPI/"]
+COPY ["local-packages/", "local-packages/"]
 
 RUN --mount=type=secret,id=nugetconfig,target=/run/secrets/nuget.config,required=true \
-    dotnet restore "Mango.Services.OrderAPI.csproj" \
-    --configfile /run/secrets/nuget.config
+    dotnet restore "Mango.Services.OrderAPI/Mango.Services.OrderAPI.csproj" \
+    --configfile /run/secrets/nuget.config \
+    --source /src/local-packages \
+    --source https://api.nuget.org/v3/index.json
 
-COPY . .
+COPY ["Mango.Services.OrderAPI/", "Mango.Services.OrderAPI/"]
 
-RUN dotnet build "Mango.Services.OrderAPI.csproj" \
+RUN dotnet build "Mango.Services.OrderAPI/Mango.Services.OrderAPI.csproj" \
     -c $BUILD_CONFIGURATION \
     --no-restore \
     -o /app/build
@@ -27,7 +30,7 @@ RUN dotnet build "Mango.Services.OrderAPI.csproj" \
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
 
-RUN dotnet publish "Mango.Services.OrderAPI.csproj" \
+RUN dotnet publish "Mango.Services.OrderAPI/Mango.Services.OrderAPI.csproj" \
     -c $BUILD_CONFIGURATION \
     --no-restore \
     -o /app/publish \

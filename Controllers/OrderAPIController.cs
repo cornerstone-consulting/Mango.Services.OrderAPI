@@ -10,7 +10,6 @@ using Mango.Services.OrderAPI.Messages;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Options;
 
 namespace Mango.Services.OrderAPI.Controllers
 {
@@ -27,22 +26,19 @@ namespace Mango.Services.OrderAPI.Controllers
         /// Dont Make it private readonly, else it will be null.
         /// </summary>
         private IProductService _productService;
-        private readonly OrderQueueOptions _queueOptions;
-        private readonly ResponseDto _response;
+        private readonly ResponseDto _response; // response object to communicate success or failure to the client
 
         public OrderAPIController(
             AppDbContext db,
             IMapper mapper,
             IProductService productService,
             IMessageProducer messageBus,
-            IOptions<OrderQueueOptions> queueOptions,
             ILogger<OrderAPIController> logger)
         {
             _db = db;
             _mapper = mapper;
             _messageBus = messageBus;
             _productService = productService;
-            _queueOptions = queueOptions.Value;
             _response = new ResponseDto();
             _logger = logger;
         }
@@ -51,22 +47,12 @@ namespace Mango.Services.OrderAPI.Controllers
 
         [HttpPost("CreateOrder")]
         [Authorize]
-        public async Task<ResponseDto> CreateOrder([FromBody] CartDto cartDto)
+        public async Task<ResponseDto> CreateOrder(
+            [FromBody] CartDto cartDto,
+            CancellationToken cancellationToken)
         {
             try
             {
-                // Read the queue names from configuration.
-                // Read the validated queue names from options.
-                var emailQueue = _queueOptions.OrderCreatedEmailQueue;
-                var rewardQueue = _queueOptions.OrderCreatedRewardQueue;
-
-                if (string.IsNullOrWhiteSpace(emailQueue) ||
-                    string.IsNullOrWhiteSpace(rewardQueue))
-                {
-                    throw new InvalidOperationException(
-                        "OrderCreated queue names are not configured.");
-                }
-
                 OrderHeaderDto orderHeaderDto =
                     _mapper.Map<OrderHeaderDto>(cartDto.CartHeader);
 
@@ -88,7 +74,7 @@ namespace Mango.Services.OrderAPI.Controllers
                 OrderHeader orderCreated = _db.OrderHeaders
                     .Add(_mapper.Map<OrderHeader>(orderHeaderDto)).Entity;
 
-                await _db.SaveChangesAsync();
+                await _db.SaveChangesAsync(cancellationToken);
 
                 orderHeaderDto.Id = orderCreated.Id;
 
@@ -116,64 +102,27 @@ namespace Mango.Services.OrderAPI.Controllers
                 _response.Result = orderHeaderDto;
                 _response.IsSuccess = true;
 
-                // Publish independently to each consumer queue.
-                // The shared MessageBus library applies the supplied queue options.
-
-                var emailQueueOptions = new RabbitMqQueueOptions
-                {
-                    Durable = true,
-                    Arguments = new Dictionary<string, object?>
-                    {
-                        ["x-dead-letter-exchange"] = "email.dlx",
-                        ["x-dead-letter-routing-key"] = emailQueue
-                    }
-                };
-
                 try
                 {
-                    await _messageBus.SendMessage(
+                    await _messageBus.PublishAsync(
                         orderCreatedEvent,
-                        emailQueue,
+                        MessageDestination.OrderCreated,
                         orderCreatedEvent.EventId.ToString(),
-                        emailQueueOptions);
+                        cancellationToken);
                 }
                 catch (Exception ex)
                 {
                     _logger.LogError(
                         ex,
-                        "Order {OrderId} was saved, but publishing the email event to queue {QueueName} failed.",
+                        "Order {OrderId} was saved, but publishing OrderCreated event {EventId} failed.",
                         orderCreated.Id,
-                        emailQueue);
+                        orderCreatedEvent.EventId);
+                    throw;
                 }
-
-                var rewardQueueOptions = new RabbitMqQueueOptions
-                {
-                    Durable = true,
-                    Arguments = new Dictionary<string, object?>
-                    {
-                        ["x-dead-letter-exchange"] = "reward.dlx",
-                        ["x-dead-letter-routing-key"] = rewardQueue
-                    }
-                };
-
-                try
-                {
-                    await _messageBus.SendMessage(
-                        orderCreatedEvent,
-                        rewardQueue,
-                        orderCreatedEvent.EventId.ToString(),
-                        rewardQueueOptions);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(
-                        ex,
-                        "Order {OrderId} was saved, but publishing the reward event to queue {QueueName} failed.",
-                        orderCreated.Id,
-                        rewardQueue);
-                }
-
-
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
